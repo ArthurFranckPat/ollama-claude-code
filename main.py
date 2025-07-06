@@ -539,7 +539,8 @@ async def root():
             "Streaming support with word-by-word delivery",
             "Native Claude CLI session management",
             "Automatic workspace detection via cwd",
-            "Multi-header workspace support",\n            "Efficient resource usage with default model"
+            "Multi-header workspace support",
+            "Efficient resource usage with default model"
         ],
         "endpoints": {
             "generate": "/api/generate",
