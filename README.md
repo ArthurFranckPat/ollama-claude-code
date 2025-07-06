@@ -1,132 +1,160 @@
-# Ollama-to-Claude Proxy Server
+# 🚀 Ollama-to-Claude Proxy
 
-A proxy server that mimics Ollama's API but routes requests to Claude Code CLI, enabling seamless integration with Zed Agent Panel.
+Un serveur proxy FastAPI qui imite l'API Ollama mais route les requêtes vers Claude Code CLI, optimisé pour l'intégration avec Zed.
 
-## Features
+## 📋 Fonctionnalités
 
-- **Ollama API Compatibility**: Implements `/api/generate`, `/api/chat`, `/api/tags`, and `/api/show` endpoints
-- **Claude CLI Integration**: Uses Claude Code CLI for actual AI processing
-- **Session Management**: Proper session lifecycle management with cleanup
-- **Streaming Support**: Real-time streaming responses
-- **TypeScript**: Full TypeScript implementation with proper types
-- **Logging**: Comprehensive logging with Winston
-- **Health Monitoring**: Built-in health check endpoint
+- **API compatible Ollama** : Endpoints `/api/chat`, `/api/generate`, `/api/tags`
+- **Streaming en temps réel** : Réponses mot par mot avec Server-Sent Events
+- **Gestion native des sessions** : Utilise les flags `-c` et `--resume` de Claude CLI
+- **Détection automatique de workspace** : Via `cwd` et headers multiples
+- **Optimisé pour les ressources** : Utilise le modèle par défaut (pas de thinking forcé)
 
-## Installation
+## 🔧 Installation
 
 ```bash
-npm install
+git clone https://github.com/ArthurFranckPat/ollama-claude-code.git
+cd ollama-claude-code
+pip install fastapi uvicorn requests
 ```
 
-## Usage
-
-### Development
+## 🚀 Démarrage
 
 ```bash
-npm run dev
+# Démarrer le serveur proxy
+python3 main.py
+
+# Le serveur écoute sur http://localhost:11435
 ```
 
-### Production
+## 🎯 Intégration Zed
 
-```bash
-npm run build
-npm start
-```
-
-### Environment Variables
-
-- `PORT`: Server port (default: 11434)
-- `DEBUG`: Enable debug logging (default: false)
-- `LOG_LEVEL`: Winston log level (default: info)
-- `NODE_ENV`: Environment (production/development)
-
-## API Endpoints
-
-### Generate Completion
-```bash
-curl -X POST http://localhost:11434/api/generate \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4","prompt":"Hello!"}'
-```
-
-### Chat Completion
-```bash
-curl -X POST http://localhost:11434/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4","messages":[{"role":"user","content":"Hello!"}]}'
-```
-
-### List Models
-```bash
-curl http://localhost:11434/api/tags
-```
-
-### Health Check
-```bash
-curl http://localhost:11434/health
-```
-
-## Zed Integration
-
-Configure Zed to use this proxy server by adding to your `settings.json`:
-
+### Configuration Zed
+Dans `~/.config/zed/settings.json` :
 ```json
 {
   "language_models": {
-    "openai": {
-      "api_url": "http://localhost:11434/v1",
-      "available_models": [
-        {
-          "name": "claude-sonnet-4",
-          "display_name": "Claude Sonnet 4",
-          "max_tokens": 8192
-        }
-      ]
+    "ollama": {
+      "api_url": "http://localhost:11435",
+      "low_speed_timeout_in_seconds": 30
     }
-  }
+  },
+  "available_models": [
+    {
+      "provider": "ollama",
+      "name": "claude-sonnet-4",
+      "max_tokens": 8192
+    }
+  ]
 }
 ```
 
-## Architecture
+### Workflow Simple
 
-- **Express Server**: Main HTTP server with TypeScript
-- **Claude Session Manager**: Manages Claude CLI processes with node-pty
-- **Request Translation**: Converts Ollama API format to Claude CLI commands
-- **Response Streaming**: Implements real-time response streaming
-- **Session Cleanup**: Automatic cleanup of inactive sessions
+1. **Démarrer le proxy** (une fois par session)
+   ```bash
+   cd ollama-claude-code
+   python3 main.py &
+   ```
 
-## Development
+2. **Configurer le workspace** (par projet)
+   ```bash
+   cd /path/to/your/project
+   python3 /path/to/proxy/zed-workspace-helper.py detect
+   ```
 
-### Project Structure
+3. **Ouvrir Zed**
+   ```bash
+   zed .
+   ```
 
-```
-src/
-├── server.ts              # Main Express server
-├── claude-session-manager.ts  # Claude CLI session management
-├── logger.ts              # Winston logging configuration
-└── types.ts               # TypeScript interfaces
-```
+4. **Claude Code travaille maintenant dans le bon dossier !**
 
-### Testing
+## 🎯 Avantages de cette Approche
 
+### ✅ Efficacité des Ressources
+- **Modèle par défaut** : Pas de forçage Sonnet 4 avec thinking
+- **Simple `cwd`** : Pas besoin de `--add-dir` 
+- **Moins de tokens** : Pas de surcharge thinking
+- **Plus rapide** : Réponses plus directes
+
+### ✅ Simplicité
+- **Native Claude CLI** : Utilise les capacités natives du CLI
+- **Pas de surcharge** : Juste `cd` vers le workspace
+- **Configuration minimale** : Workspace détecté automatiquement
+
+### ✅ Flexibilité
+- **Auto-détection** : Via headers, prompts, et patterns
+- **Fallback intelligent** : Toujours un workspace valide
+- **Compatible Zed** : Intégration transparente
+
+## 🔧 Scripts Utiles
+
+### Helper de Workspace
 ```bash
-# Test generation endpoint
-curl -X POST http://localhost:11434/api/generate \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4","prompt":"Write a hello world in Python"}'
+# Auto-détection du workspace actuel
+python3 zed-workspace-helper.py detect
 
-# Test chat endpoint
-curl -X POST http://localhost:11434/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4","messages":[{"role":"user","content":"What is TypeScript?"}]}'
+# Lister les workspaces potentiels
+python3 zed-workspace-helper.py list
+
+# Définir un workspace spécifique
+python3 zed-workspace-helper.py set /path/to/project
+
+# Vérifier le statut du proxy
+python3 zed-workspace-helper.py status
 ```
 
-## Requirements
+### Tests
+```bash
+# Tester les fonctionnalités
+python3 test_workspace.py
+```
 
-- Node.js 18+
-- Claude Code CLI installed and accessible in PATH
-- TypeScript 5.7+
+## 📊 API Endpoints
 
-## License
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| `/api/chat` | POST | Chat avec streaming |
+| `/api/generate` | POST | Génération simple |
+| `/api/tags` | GET | Liste des modèles |
+| `/api/set-working-directory` | POST | Définir workspace |
+| `/api/get-working-directory` | GET | Obtenir workspace |
+| `/api/sessions` | GET | Sessions actives |
+| `/health` | GET | Santé du serveur |
 
-ISC
+## 🐛 Troubleshooting
+
+### Claude ne voit pas les bons fichiers
+```bash
+# Vérifier le workspace actuel
+python3 zed-workspace-helper.py status
+
+# Reconfigurer si nécessaire
+python3 zed-workspace-helper.py detect
+```
+
+### Le proxy ne répond pas
+```bash
+# Vérifier que le proxy tourne
+curl http://localhost:11435/health
+
+# Redémarrer si nécessaire
+pkill -f "python3 main.py"
+python3 main.py &
+```
+
+## 📈 Optimisations Futures
+
+- **Extension Zed native** : Intégration directe sans proxy
+- **Cache intelligent** : Réutilisation des sessions
+- **Détection temps réel** : Changement automatique de workspace
+- **Métriques** : Monitoring des performances
+
+## 🤝 Contribution
+
+Les contributions sont les bienvenues ! Ouvrez une issue ou une pull request.
+
+## 📄 License
+
+MIT License - voir le fichier LICENSE pour plus de détails.

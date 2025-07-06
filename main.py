@@ -215,31 +215,28 @@ async def execute_claude_streaming(prompt: str, working_dir: Optional[str] = Non
                 is_continuation = True
         
         # Build command arguments using Claude CLI native session flags
+        # Use default model and rely on cwd for workspace access (more efficient)
         if is_continuation:
             # Continue existing conversation using -c flag
             cmd_args = [
                 CLAUDE_CLI_PATH,
                 "-c",  # Continue flag for conversation continuity
                 "-p", prompt,
-                "--model", "claude-sonnet-4-20250514",  # Force Sonnet 4 model (supports thinking)
                 "--output-format", "stream-json",
                 "--verbose",
-                "--dangerously-skip-permissions",
-                "--add-dir", cwd  # Allow access to the working directory
+                "--dangerously-skip-permissions"
             ]
-            logger.info(f"Continuing Claude session {session_id} with Sonnet in {cwd}")
+            logger.info(f"Continuing Claude session {session_id} in {cwd}")
         else:
             # Start new conversation
             cmd_args = [
                 CLAUDE_CLI_PATH,
                 "-p", prompt,
-                "--model", "claude-sonnet-4-20250514",  # Force Sonnet 4 model (supports thinking)
                 "--output-format", "stream-json",
                 "--verbose",
-                "--dangerously-skip-permissions",
-                "--add-dir", cwd  # Allow access to the working directory
+                "--dangerously-skip-permissions"
             ]
-            logger.info(f"Starting new Claude session {session_id} with Sonnet in {cwd}")
+            logger.info(f"Starting new Claude session {session_id} in {cwd}")
             
             # Mark session as started
             if session_id:
@@ -338,27 +335,24 @@ async def execute_claude(prompt: str, working_dir: Optional[str] = None, session
                 is_continuation = True
         
         # Build command arguments using Claude CLI native session flags
+        # Use default model and rely on cwd for workspace access (more efficient)
         if is_continuation:
             # Continue existing conversation using -c flag
             cmd_args = [
                 CLAUDE_CLI_PATH,
                 "-c",  # Continue flag for conversation continuity
                 "-p", prompt,
-                "--model", "claude-sonnet-4-20250514",  # Force Sonnet 4 model (supports thinking)
-                "--dangerously-skip-permissions",
-                "--add-dir", cwd  # Allow access to the working directory
+                "--dangerously-skip-permissions"
             ]
-            logger.info(f"Continuing Claude session {session_id} with Sonnet in {cwd}")
+            logger.info(f"Continuing Claude session {session_id} in {cwd}")
         else:
             # Start new conversation
             cmd_args = [
                 CLAUDE_CLI_PATH,
                 "-p", prompt,
-                "--model", "claude-sonnet-4-20250514",  # Force Sonnet 4 model (supports thinking)
-                "--dangerously-skip-permissions",
-                "--add-dir", cwd  # Allow access to the working directory
+                "--dangerously-skip-permissions"
             ]
-            logger.info(f"Starting new Claude session {session_id} with Sonnet in {cwd}")
+            logger.info(f"Starting new Claude session {session_id} in {cwd}")
             
             # Mark session as started
             if session_id:
@@ -544,8 +538,8 @@ async def root():
         "features": [
             "Streaming support with word-by-word delivery",
             "Native Claude CLI session management",
-            "Automatic workspace detection",
-            "Multi-header workspace support"
+            "Automatic workspace detection via cwd",
+            "Multi-header workspace support",\n            "Efficient resource usage with default model"
         ],
         "endpoints": {
             "generate": "/api/generate",
@@ -580,7 +574,7 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": time.time(),
-        "models": ["claude-sonnet-4", "claude-opus-4"]
+        "models": ["claude-sonnet-4", "claude-opus-4", "claude-3-5-sonnet-20241022"]
     }
 
 @app.post("/api/generate")
