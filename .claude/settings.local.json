@@ -21,7 +21,12 @@
       "Bash(pkill:*)",
       "Bash(rm:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh repo create:*)",
+      "Bash(gh auth:*)",
+      "Bash(/Users/arthur/.claude/local/claude -p \"Bonjour\" --output-format stream-json --dangerously-skip-permissions)",
+      "Bash(/Users/arthur/.claude/local/claude -p \"Bonjour, écris juste une phrase\" --output-format stream-json --verbose --dangerously-skip-permissions)"
     ],
     "deny": []
   }

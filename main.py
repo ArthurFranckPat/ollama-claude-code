@@ -5,15 +5,17 @@ A FastAPI server that mimics Ollama's API but routes requests to Claude Code CLI
 """
 
 import asyncio
+import json
 import logging
 import os
 import subprocess
 import time
 import uuid
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # Configure logging
@@ -115,6 +117,125 @@ class ModelsResponse(BaseModel):
     models: List[ModelInfo]
 
 # Legacy context management functions removed - now using Claude CLI native session management
+
+async def execute_claude_streaming(prompt: str, working_dir: Optional[str] = None, session_id: Optional[str] = None, messages: List[ChatMessage] = None) -> AsyncGenerator[str, None]:
+    """Execute Claude CLI with streaming output using stream-json format"""
+    try:
+        logger.info(f"Executing Claude with streaming for prompt: {prompt[:100]}...")
+        
+        # Use provided working directory or current directory
+        cwd = working_dir or os.getcwd()
+        logger.info(f"Working directory: {cwd}")
+        
+        # Determine if this is a continuation or new session
+        is_continuation = False
+        if session_id and session_id in sessions:
+            session_data = sessions[session_id]
+            if "claude_session_started" in session_data:
+                is_continuation = True
+        
+        # Build command arguments using Claude CLI native session flags
+        if is_continuation:
+            # Continue existing conversation using -c flag
+            cmd_args = [
+                CLAUDE_CLI_PATH,
+                "-c",  # Continue flag for conversation continuity
+                "-p", prompt,
+                "--output-format", "stream-json",
+                "--verbose",
+                "--dangerously-skip-permissions"
+            ]
+            logger.info(f"Continuing Claude session {session_id} with streaming")
+        else:
+            # Start new conversation
+            cmd_args = [
+                CLAUDE_CLI_PATH,
+                "-p", prompt,
+                "--output-format", "stream-json",
+                "--verbose",
+                "--dangerously-skip-permissions"
+            ]
+            logger.info(f"Starting new Claude session {session_id} with streaming")
+            
+            # Mark session as started
+            if session_id:
+                sessions[session_id]["claude_session_started"] = True
+        
+        # Start subprocess with streaming
+        process = subprocess.Popen(
+            cmd_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+            bufsize=1,  # Line buffered
+            universal_newlines=True
+        )
+        
+        logger.info(f"Started Claude process PID: {process.pid}")
+        
+        # Stream output line by line
+        full_response = ""
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+                
+            line = line.strip()
+            if line:
+                try:
+                    # Parse JSON line from stream-json format
+                    data = json.loads(line)
+                    
+                    # Extract content based on Claude CLI stream-json format
+                    if data.get('type') == 'assistant' and 'message' in data:
+                        message = data['message']
+                        if 'content' in message and isinstance(message['content'], list):
+                            for content_item in message['content']:
+                                if content_item.get('type') == 'text' and 'text' in content_item:
+                                    content = content_item['text']
+                                    full_response += content
+                                    
+                                    # Simulate streaming by splitting into words
+                                    words = content.split(' ')
+                                    for i, word in enumerate(words):
+                                        if i > 0:
+                                            yield ' '
+                                        yield word
+                                        # Small delay to simulate real-time streaming
+                                        await asyncio.sleep(0.05)
+                    elif data.get('type') == 'result' and 'result' in data:
+                        # Final result - we've already got the content from assistant message
+                        pass
+                    elif 'content' in data and data['content']:
+                        # Fallback for other formats
+                        content = data['content']
+                        full_response += content
+                        yield content
+                    elif 'text' in data and data['text']:
+                        # Another fallback
+                        content = data['text']
+                        full_response += content
+                        yield content
+                        
+                except json.JSONDecodeError:
+                    # If not JSON, yield as-is (might be plain text)
+                    full_response += line
+                    yield line
+        
+        # Wait for process to complete
+        return_code = process.wait()
+        
+        if return_code != 0:
+            stderr_output = process.stderr.read() if process.stderr else ""
+            logger.error(f"Claude CLI error (code {return_code}): {stderr_output}")
+            yield f"\n[Error: Claude CLI returned code {return_code}]"
+        
+        logger.info(f"Claude streaming completed. Total response length: {len(full_response)}")
+        
+    except Exception as e:
+        logger.error(f"Error in streaming Claude execution: {e}")
+        yield f"\n[Error: {str(e)}]"
 
 async def execute_claude(prompt: str, working_dir: Optional[str] = None, session_id: Optional[str] = None, messages: List[ChatMessage] = None) -> str:
     """Execute Claude CLI with native session management"""
@@ -304,24 +425,58 @@ async def generate(request: GenerateRequest) -> GenerateResponse:
     )
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest, http_request: Request) -> ChatResponse:
-    """Ollama-compatible chat endpoint"""
-    logger.info(f"Chat request for model: {request.model}")
+async def chat(request: ChatRequest, http_request: Request):
+    """Ollama-compatible chat endpoint with streaming support"""
+    logger.info(f"Chat request for model: {request.model}, streaming: {request.stream}")
     
     # Extract user message and session info
     user_prompt = extract_user_message(request.messages)
     session_id, working_dir = extract_session_info(http_request, user_prompt)
     
-    response_text = await execute_claude(user_prompt, working_dir, session_id, request.messages)
-    
-    return ChatResponse(
-        model=request.model,
-        created_at=time.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-        message=ChatMessage(role="assistant", content=response_text),
-        done=True,
-        prompt_eval_count=len(user_prompt.split()),
-        eval_count=len(response_text.split())
-    )
+    if request.stream:
+        # Streaming response
+        async def generate_chat_stream():
+            async for chunk in execute_claude_streaming(user_prompt, working_dir, session_id, request.messages):
+                # Format as Ollama chat streaming response
+                response = {
+                    "model": request.model,
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    "message": {
+                        "role": "assistant",
+                        "content": chunk
+                    },
+                    "done": False
+                }
+                yield f"{json.dumps(response)}\n"
+            
+            # Send final chunk
+            final_response = {
+                "model": request.model,
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                "message": {
+                    "role": "assistant",
+                    "content": ""
+                },
+                "done": True
+            }
+            yield f"{json.dumps(final_response)}\n"
+        
+        return StreamingResponse(
+            generate_chat_stream(),
+            media_type="application/x-ndjson"
+        )
+    else:
+        # Non-streaming response
+        response_text = await execute_claude(user_prompt, working_dir, session_id, request.messages)
+        
+        return ChatResponse(
+            model=request.model,
+            created_at=time.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            message=ChatMessage(role="assistant", content=response_text),
+            done=True,
+            prompt_eval_count=len(user_prompt.split()),
+            eval_count=len(response_text.split())
+        )
 
 @app.post("/v1/chat/completions")
 async def openai_chat(request: ChatRequest, http_request: Request) -> OpenAIChatResponse:
