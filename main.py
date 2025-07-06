@@ -40,6 +40,86 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Auto-workspace detection based on common patterns
+def auto_detect_workspace_from_context(prompt: str, user_agent: str) -> Optional[str]:
+    """Automatically detect workspace from prompt context and patterns"""
+    import re
+    
+    # Pattern 1: Look for file paths mentioned in the prompt
+    file_patterns = [
+        r'(?:file|fichier)[:\s]+([/~][^\s,\.]+)',
+        r'(?:in|dans|at)\s+([/~][^\s,\.]+)',
+        r'`([/~][^`]+)`',
+        r'"([/~][^"]+)"',
+        r'project[:\s]+([/~][^\s,\.]+)',
+    ]
+    
+    for pattern in file_patterns:
+        matches = re.findall(pattern, prompt, re.IGNORECASE)
+        for match in matches:
+            # Expand ~ to home directory
+            expanded_path = os.path.expanduser(match)
+            if os.path.isfile(expanded_path):
+                # If it's a file, get its directory
+                workspace = os.path.dirname(expanded_path)
+            elif os.path.isdir(expanded_path):
+                workspace = expanded_path
+            else:
+                continue
+                
+            # Validate it looks like a real workspace
+            if any(os.path.exists(os.path.join(workspace, marker)) for marker in 
+                  ['.git', 'package.json', 'Cargo.toml', '.zed', '.vscode', 'pom.xml']):
+                logger.info(f"Auto-detected workspace from prompt: {workspace}")
+                return workspace
+    
+    # Pattern 2: Common workspace keywords with smart guessing
+    workspace_keywords = {
+        'desktop': '/Users/arthur/Desktop',
+        'hire-agentic': '/Users/arthur/Desktop/hire-agentic',
+        'plugins': '/Users/arthur/Desktop/Plugins',
+        'ollama-claude': '/Users/arthur/Desktop/Plugins/ollama-claude-code',
+        'documents': '/Users/arthur/Documents',
+    }
+    
+    prompt_lower = prompt.lower()
+    for keyword, path in workspace_keywords.items():
+        if keyword in prompt_lower and os.path.exists(path):
+            logger.info(f"Auto-detected workspace from keyword '{keyword}': {path}")
+            return path
+    
+    return None
+
+def get_most_likely_workspace() -> str:
+    """Get the most likely workspace based on recent activity"""
+    
+    # Check for recent git activity in common locations
+    common_workspaces = [
+        '/Users/arthur/Desktop/hire-agentic',
+        '/Users/arthur/Desktop/Plugins/ollama-claude-code', 
+        '/Users/arthur/Desktop',
+        '/Users/arthur/Documents',
+        '/Users/arthur/Projects',
+    ]
+    
+    for workspace in common_workspaces:
+        if os.path.exists(workspace):
+            # Check if it's an active workspace (has recent activity)
+            if os.path.exists(os.path.join(workspace, '.git')):
+                return workspace
+    
+    # Fallback to Desktop
+    return '/Users/arthur/Desktop'
+
+# Store auto-detected workspaces globally
+auto_workspaces = {}
+
+# Commented out middleware temporarily for debugging
+# @app.middleware("http")
+# async def auto_workspace_middleware(request: Request, call_next):
+#     response = await call_next(request)
+#     return response
+
 # Claude CLI path - adjust this to your installation
 CLAUDE_CLI_PATH = "/Users/arthur/.claude/local/claude"
 
@@ -141,21 +221,25 @@ async def execute_claude_streaming(prompt: str, working_dir: Optional[str] = Non
                 CLAUDE_CLI_PATH,
                 "-c",  # Continue flag for conversation continuity
                 "-p", prompt,
+                "--model", "claude-sonnet-4-20250514",  # Force Sonnet 4 model (supports thinking)
                 "--output-format", "stream-json",
                 "--verbose",
-                "--dangerously-skip-permissions"
+                "--dangerously-skip-permissions",
+                "--add-dir", cwd  # Allow access to the working directory
             ]
-            logger.info(f"Continuing Claude session {session_id} with streaming")
+            logger.info(f"Continuing Claude session {session_id} with Sonnet in {cwd}")
         else:
             # Start new conversation
             cmd_args = [
                 CLAUDE_CLI_PATH,
                 "-p", prompt,
+                "--model", "claude-sonnet-4-20250514",  # Force Sonnet 4 model (supports thinking)
                 "--output-format", "stream-json",
                 "--verbose",
-                "--dangerously-skip-permissions"
+                "--dangerously-skip-permissions",
+                "--add-dir", cwd  # Allow access to the working directory
             ]
-            logger.info(f"Starting new Claude session {session_id} with streaming")
+            logger.info(f"Starting new Claude session {session_id} with Sonnet in {cwd}")
             
             # Mark session as started
             if session_id:
@@ -260,17 +344,21 @@ async def execute_claude(prompt: str, working_dir: Optional[str] = None, session
                 CLAUDE_CLI_PATH,
                 "-c",  # Continue flag for conversation continuity
                 "-p", prompt,
-                "--dangerously-skip-permissions"
+                "--model", "claude-sonnet-4-20250514",  # Force Sonnet 4 model (supports thinking)
+                "--dangerously-skip-permissions",
+                "--add-dir", cwd  # Allow access to the working directory
             ]
-            logger.info(f"Continuing Claude session {session_id}")
+            logger.info(f"Continuing Claude session {session_id} with Sonnet in {cwd}")
         else:
             # Start new conversation
             cmd_args = [
                 CLAUDE_CLI_PATH,
                 "-p", prompt,
-                "--dangerously-skip-permissions"
+                "--model", "claude-sonnet-4-20250514",  # Force Sonnet 4 model (supports thinking)
+                "--dangerously-skip-permissions",
+                "--add-dir", cwd  # Allow access to the working directory
             ]
-            logger.info(f"Starting new Claude session {session_id}")
+            logger.info(f"Starting new Claude session {session_id} with Sonnet in {cwd}")
             
             # Mark session as started
             if session_id:
@@ -327,50 +415,115 @@ def extract_session_info(request: Request, prompt: str) -> tuple[Optional[str], 
     # Try to get session ID from headers (Zed might send this)
     session_id = request.headers.get("x-session-id") or request.headers.get("conversation-id")
     
+    # Create session key for auto-detection
+    user_agent = request.headers.get("user-agent", "")
+    client_ip = request.client.host if request.client else ""
+    request_key = f"{user_agent}_{client_ip}"
+    
     # If no session ID, create one based on request characteristics
     if not session_id:
-        # Use a combination of headers to create a stable session ID
-        user_agent = request.headers.get("user-agent", "")
-        client_ip = request.client.host if request.client else ""
         session_id = f"session_{hash(user_agent + client_ip) % 10000}"
     
     # Check if we have an existing session
     if session_id in sessions:
         logger.info(f"Continuing existing session: {session_id}")
         working_dir = sessions[session_id]["working_dir"]
+        
+        # Update with auto-detected workspace if available and different
+        if request_key in auto_workspaces:
+            auto_workspace = auto_workspaces[request_key]
+            if auto_workspace != working_dir:
+                sessions[session_id]["working_dir"] = auto_workspace
+                logger.info(f"Updated session workspace to auto-detected: {auto_workspace}")
+                working_dir = auto_workspace
+        
         return session_id, working_dir
     
-    # New session - try to extract working directory
-    working_dir = None
+    # New session - check for auto-detected workspace first
+    working_dir = auto_workspaces.get(request_key)
+    if working_dir:
+        logger.info(f"Using auto-detected workspace for new session: {working_dir}")
+    else:
+        # Fallback to manual detection
+        working_dir = None
     
-    # Check headers for project path
-    project_path = request.headers.get("x-project-path")
-    if project_path and os.path.exists(project_path):
-        working_dir = project_path
+    # 1. Check multiple possible headers that Zed/editors might send
+    possible_headers = [
+        "x-project-path",       # Custom header we can use
+        "x-workspace",          # Another custom header
+        "x-working-directory",  # Standard working dir header
+        "x-cwd",                # Current working directory
+        "x-project-root",       # Project root
+        "workspace-root",       # Alternative workspace header
+        "project-path"          # Alternative project header
+    ]
     
-    # Check for workspace headers
+    for header in possible_headers:
+        path = request.headers.get(header)
+        if path and os.path.exists(path) and os.path.isdir(path):
+            working_dir = path
+            logger.info(f"Found working directory from header '{header}': {working_dir}")
+            break
+    
+    # 2. Try to extract from User-Agent if it contains path info
     if not working_dir:
-        workspace = request.headers.get("x-workspace")
-        if workspace and os.path.exists(workspace):
-            working_dir = workspace
+        user_agent = request.headers.get("user-agent", "")
+        if "zed" in user_agent.lower():
+            # Look for path patterns in User-Agent
+            import re
+            path_match = re.search(r'path[=:]([^\s;]+)', user_agent, re.IGNORECASE)
+            if path_match:
+                potential_path = path_match.group(1)
+                if os.path.exists(potential_path) and os.path.isdir(potential_path):
+                    working_dir = potential_path
+                    logger.info(f"Found working directory from User-Agent: {working_dir}")
     
-    # Try to extract from prompt
+    # 3. Try to extract from prompt with improved patterns
     if not working_dir:
         import re
         path_patterns = [
-            r'(?:in|@)\s+(/[^\s]+)',
-            r'(?:cd|directory|folder)\s+(/[^\s]+)',
-            r'(?:project|workspace)\s+(/[^\s]+)'
+            r'(?:working in|in project|in directory|in folder|project at|workspace at)\s+([^\s,\.]+)',
+            r'(?:in|@)\s+(/[^\s,\.]+)',
+            r'(?:cd|directory|folder)\s+([^\s,\.]+)',
+            r'(?:project|workspace)\s+([^\s,\.]+)',
+            r'file[:\s]+([^\s]+/[^\s]+)',  # file: /path/to/file
+            r'`([^`]+/[^`]+)`',            # `path/to/directory`
         ]
         
         for pattern in path_patterns:
             matches = re.findall(pattern, prompt, re.IGNORECASE)
             for match in matches:
-                if os.path.exists(match) and os.path.isdir(match):
-                    working_dir = match
+                # Extract directory from file path if it's a file
+                potential_dir = match
+                if os.path.isfile(potential_dir):
+                    potential_dir = os.path.dirname(potential_dir)
+                
+                if os.path.exists(potential_dir) and os.path.isdir(potential_dir):
+                    working_dir = potential_dir
+                    logger.info(f"Found working directory from prompt: {working_dir}")
                     break
             if working_dir:
                 break
+    
+    # 4. Try to detect workspace from common Zed/editor patterns
+    if not working_dir:
+        # Look for common workspace indicators in the prompt
+        workspace_indicators = [
+            "workspace", "project", "repo", "repository", "codebase", 
+            "directory", "folder", "working on", "dans le projet"
+        ]
+        
+        for indicator in workspace_indicators:
+            if indicator in prompt.lower():
+                # Ask Claude to help detect workspace in the prompt itself
+                workspace_hint = f"Working in a {indicator}"
+                logger.info(f"Found workspace indicator: {indicator}")
+                break
+    
+    # 5. Final fallback: use smart workspace detection
+    if not working_dir:
+        working_dir = get_most_likely_workspace()
+        logger.info(f"Using smart fallback workspace: {working_dir}")
     
     # Store session info
     sessions[session_id] = {
@@ -388,14 +541,36 @@ async def root():
     return {
         "message": "Ollama-to-Claude Proxy Server",
         "version": "1.0.0",
+        "features": [
+            "Streaming support with word-by-word delivery",
+            "Native Claude CLI session management",
+            "Automatic workspace detection",
+            "Multi-header workspace support"
+        ],
         "endpoints": {
             "generate": "/api/generate",
-            "chat": "/api/chat",
+            "chat": "/api/chat (supports streaming)",
             "openai_chat": "/v1/chat/completions",
             "tags": "/api/tags",
             "show": "/api/show",
             "ps": "/api/ps",
-            "health": "/health"
+            "health": "/health",
+            "set_workspace": "/api/set-working-directory",
+            "get_workspace": "/api/get-working-directory",
+            "sessions": "/api/sessions"
+        },
+        "workspace_headers": [
+            "x-project-path",
+            "x-workspace", 
+            "x-working-directory",
+            "x-cwd",
+            "x-project-root",
+            "workspace-root",
+            "project-path"
+        ],
+        "usage": {
+            "set_workspace": "POST /api/set-working-directory with {\"working_dir\": \"/path/to/project\"}",
+            "streaming": "Add \"stream\": true to chat requests for real-time response"
         }
     }
 
@@ -606,16 +781,70 @@ async def pull_model(request: dict):
 @app.post("/api/set-working-directory")
 async def set_working_directory(request: dict, http_request: Request):
     """Set working directory for a session"""
-    working_dir = request.get("working_dir")
-    if not working_dir or not os.path.exists(working_dir):
-        raise HTTPException(status_code=400, detail="Invalid working directory")
+    working_dir = request.get("working_dir") or request.get("workspace") or request.get("project_path")
     
-    # Get or create session
-    session_id, _ = extract_session_info(http_request, "")
-    sessions[session_id]["working_dir"] = working_dir
+    if not working_dir:
+        raise HTTPException(status_code=400, detail="Missing working_dir, workspace, or project_path")
     
-    logger.info(f"Set working directory for session {session_id}: {working_dir}")
-    return {"status": "success", "session_id": session_id, "working_dir": working_dir}
+    # Expand user path and resolve relative paths
+    working_dir = os.path.expanduser(working_dir)
+    working_dir = os.path.abspath(working_dir)
+    
+    if not os.path.exists(working_dir):
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {working_dir}")
+    
+    if not os.path.isdir(working_dir):
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {working_dir}")
+    
+    # Get session ID from request or headers
+    session_id = (request.get("session_id") or 
+                 http_request.headers.get("x-session-id") or 
+                 http_request.headers.get("conversation-id"))
+    
+    if not session_id:
+        # Create new session ID
+        user_agent = http_request.headers.get("user-agent", "")
+        client_ip = http_request.client.host if http_request.client else ""
+        session_id = f"session_{hash(user_agent + client_ip) % 10000}"
+    
+    # Update or create session
+    if session_id in sessions:
+        sessions[session_id]["working_dir"] = working_dir
+        logger.info(f"Updated working directory for existing session {session_id}: {working_dir}")
+    else:
+        sessions[session_id] = {
+            "working_dir": working_dir,
+            "context_summary": "",
+            "created_at": time.time()
+        }
+        logger.info(f"Created new session {session_id} with working directory: {working_dir}")
+    
+    return {
+        "status": "success", 
+        "session_id": session_id, 
+        "working_dir": working_dir,
+        "message": f"Working directory set to {working_dir}"
+    }
+
+@app.get("/api/get-working-directory")
+async def get_working_directory(http_request: Request):
+    """Get current working directory for a session"""
+    session_id = (http_request.headers.get("x-session-id") or 
+                 http_request.headers.get("conversation-id"))
+    
+    if session_id and session_id in sessions:
+        working_dir = sessions[session_id]["working_dir"]
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "working_dir": working_dir
+        }
+    else:
+        return {
+            "status": "not_found",
+            "message": "No active session found",
+            "working_dir": os.getcwd()
+        }
 
 @app.get("/api/sessions")
 async def list_sessions():

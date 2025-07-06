@@ -26,7 +26,14 @@
       "Bash(gh repo create:*)",
       "Bash(gh auth:*)",
       "Bash(/Users/arthur/.claude/local/claude -p \"Bonjour\" --output-format stream-json --dangerously-skip-permissions)",
-      "Bash(/Users/arthur/.claude/local/claude -p \"Bonjour, écris juste une phrase\" --output-format stream-json --verbose --dangerously-skip-permissions)"
+      "Bash(/Users/arthur/.claude/local/claude -p \"Bonjour, écris juste une phrase\" --output-format stream-json --verbose --dangerously-skip-permissions)",
+      "Bash(git push:*)",
+      "Bash(/Users/arthur/.claude/local/claude config)",
+      "Bash(/Users/arthur/.claude/local/claude config list)",
+      "Bash(/Users/arthur/.claude/local/claude config get model)",
+      "Bash(/Users/arthur/.claude/local/claude -p \"Bonjour\" --model \"claude-3-5-sonnet-20241022\" --dangerously-skip-permissions)",
+      "Bash(/Users/arthur/.claude/local/claude -p \"Bonjour\" --model \"claude-3-5-sonnet-20241022\" --output-format \"stream-json\" --verbose --dangerously-skip-permissions --add-dir \"/Users/arthur/Desktop\")",
+      "Bash(/Users/arthur/.claude/local/claude -p \"Bonjour, teste avec thinking\" --model \"claude-sonnet-4-20250514\" --dangerously-skip-permissions)"
     ],
     "deny": []
   }
