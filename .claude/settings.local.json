@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:zed.dev)",
+      "WebFetch(domain:github.com)",
+      "Bash(mkdir:*)",
+      "Bash(claude --print \"Hello, world!\")",
+      "Bash(curl:*)",
+      "Bash(claude --print \"Human: Hello!\")",
+      "Bash(claude --print \"Hello!\")",
+      "Bash(echo $PATH)",
+      "Bash(pip3 install:*)",
+      "Bash(python3:*)",
+      "Bash(claude --print \"Test message\")",
+      "Bash(claude --print \"My name is Arthur\")",
+      "Bash(claude --print --continue \"What is my name?\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python:*)",
+      "Bash(/Users/arthur/.claude/local/claude --help)",
+      "Bash(pkill:*)",
+      "Bash(rm:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": []
+  }
+}
